@@ -1,23 +1,73 @@
 use bevy::prelude::*;
+use bevy::core::FixedTimestep;
+
+const WINDOW_SIZE: f32 = 300.0;
+const GRID_SIZE: u32 = 15;
+const CELLSIZE: f32 = WINDOW_SIZE / GRID_SIZE as f32;
+
+#[derive(Default, Copy, Clone, Eq, PartialEq)]
+struct Location {
+    x: i32,
+    y: i32,
+}
+
+#[derive(PartialEq, Copy, Clone)]
+enum Direction {
+    Up,
+    Left,
+    Down,
+    Right,
+}
+
+impl Direction {
+    fn opposite(self) -> Self {
+        match self {
+            Self::Up => Self::Down,
+            Self::Left => Self::Right,
+            Self::Down => Self::Up,
+            Self::Right => Self::Left,
+        }
+    }
+}
 
 struct Head {
-    direction: i64,
-    timer: f32
+    direction: Direction,
+}
+
+#[derive(SystemLabel, Debug, Hash, PartialEq, Eq, Clone)]
+pub enum Order {
+    Input,
+    Movement,
+    Eating,
+    Growth,
 }
 
 fn main() {
     App::build()
     .insert_resource(WindowDescriptor {
         title: "Snake".to_string(),
-        width: 300.0,
-        height: 300.0,
+        width: WINDOW_SIZE,
+        height: WINDOW_SIZE,
         ..Default::default()
     })
     .add_plugins(DefaultPlugins)
     .add_startup_system(setup.system())
     .add_startup_system(spawn.system())
-    .add_system(change_direction.system())
-    .add_system(move_head.system())
+    .add_system_set_to_stage(
+        CoreStage::PostUpdate,
+        SystemSet::new()
+            .with_system(update_location.system())
+    )
+    .add_system(
+        change_direction.system()
+        .label(Order::Input)
+        .before(Order::Movement)
+    )
+    .add_system_set(
+        SystemSet::new()
+        .with_run_criteria(FixedTimestep::step(0.35))
+        .with_system(move_head.system().label(Order::Movement))
+    )
     .run();
 }
 
@@ -29,64 +79,86 @@ fn spawn(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
     commands.spawn_bundle(SpriteBundle {
         material: materials.add(Color::rgb(1.0,1.0,1.0).into()),
         transform: Transform::from_xyz(0.0,0.0,0.0),
-        sprite: Sprite::new(Vec2::new(20.0,20.0)),
+        sprite: Sprite::new(Vec2::new(CELLSIZE, CELLSIZE)),
         ..Default::default()
-    }).insert(Head {
-        direction: 0,
-        timer: 0.0
+    })
+    .insert(Head {
+        direction: Direction::Up,
+    })
+    .insert(Location {
+        x: 8,
+        y: 8,
     });
 }
 
-fn change_direction(keyboard_input: Res<Input<KeyCode>>, mut query: Query<&mut Head>) {
-    for mut head in query.iter_mut() {
+fn update_location(mut query: Query<(&Location, &mut Transform)>) {
 
-        if keyboard_input.pressed(KeyCode::Up) {
-            head.direction = 1;
+    for (pos, mut transform) in query.iter_mut() {
+        let mut x: f32 = 0.0;
+        let mut y: f32 = 0.0;
+
+        if pos.x > 8 {
+            let diff: f32 = pos.x as f32 - 8.0;
+            x = diff*CELLSIZE;
+        } else if pos.x <= 8 {
+            let diff: f32 = 8.0 - pos.x as f32;
+            x = diff*(-CELLSIZE);
         }
 
-        else if keyboard_input.pressed(KeyCode::Right) {
-            head.direction = 2;
+        if pos.y > 8 {
+            let diff: f32 = pos.y as f32 - 8.0;
+            y = diff*CELLSIZE;
+        } else if pos.y <= 8 {
+            let diff: f32 = 8.0 - pos.y as f32;
+            y = diff*(-CELLSIZE);
         }
 
-        else if keyboard_input.pressed(KeyCode::Down) {
-            head.direction = 3;
-        }
+        let winlimit = WINDOW_SIZE/2.0 - CELLSIZE/2.0;
 
-        else if keyboard_input.pressed(KeyCode::Left) {
-            head.direction = 4;
+        x = x.min(winlimit).max(-winlimit);
+        y = y.min(winlimit).max(-winlimit);
+
+        transform.translation = Vec3::new(
+            x,
+            y,
+            0.0,
+        );
+    }
+}
+
+fn change_direction(keyboard: Res<Input<KeyCode>>, mut query: Query<&mut Head>) {
+    
+    if let Some(mut head) = query.iter_mut().next() {
+        let dir: Direction = if keyboard.pressed(KeyCode::Up) {
+            Direction::Up
+        }
+        else if keyboard.pressed(KeyCode::Left) {
+            Direction::Left
+        }
+        else if keyboard.pressed(KeyCode::Down) {
+            Direction::Down
+        }
+        else if keyboard.pressed(KeyCode::Right) {
+            Direction::Right
+        }
+        else {
+            head.direction
+        };
+
+        if dir != head.direction.opposite() {
+            head.direction = dir;
         }
     }
 }
 
-fn move_head(time: Res<Time>, mut query: Query<(&mut Head, &mut Transform)>) {
-    let thershold: f32 = 0.2;
-
-    for (mut head, mut transform) in query.iter_mut() {
-        head.timer += time.delta_seconds();
-
-        if head.timer >= thershold {
-            let translation = &mut transform.translation;
-
-            if head.direction == 1 {
-                translation.y += 20.0
-            }
-
-            else if head.direction == 2 {
-                translation.x += 20.0
-            }
-
-            else if head.direction == 3 {
-                translation.y -= 20.0
-            }
-
-            else if head.direction == 4 {
-                translation.x -= 20.0
-            }
-
-            translation.x = translation.x.min(140.0).max(-140.0);
-            translation.y = translation.y.min(140.0).max(-140.0);
-
-            head.timer = 0.0;
+fn move_head(mut query: Query<(&mut Location, &Head)>) {
+    if let Some((mut location, head)) = query.iter_mut().next() {
+        // TODO: max and min the location.y and location.x so they dont go over 15 and below 0
+        match &head.direction {
+            Direction::Up => location.y += 1,
+            Direction::Left => location.x -= 1,
+            Direction::Down => location.y -= 1,
+            Direction::Right => location.x +=1,
         }
     }
 }
