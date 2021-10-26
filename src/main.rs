@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use rand::prelude::random;
 use bevy::core::FixedTimestep;
 
 const WINDOW_SIZE: f32 = 300.0;
@@ -34,6 +35,11 @@ struct Head {
     direction: Direction,
 }
 
+struct Segment;
+
+#[derive(Default)]
+struct Segments(Vec<Entity>);
+
 #[derive(SystemLabel, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum Order {
     Input,
@@ -44,50 +50,89 @@ pub enum Order {
 
 fn main() {
     App::build()
-    .insert_resource(WindowDescriptor {
-        title: "Snake".to_string(),
-        width: WINDOW_SIZE,
-        height: WINDOW_SIZE,
-        ..Default::default()
-    })
-    .add_plugins(DefaultPlugins)
-    .add_startup_system(setup.system())
-    .add_startup_system(spawn.system())
-    .add_system_set_to_stage(
-        CoreStage::PostUpdate,
-        SystemSet::new()
-            .with_system(update_location.system())
-    )
-    .add_system(
-        change_direction.system()
-        .label(Order::Input)
-        .before(Order::Movement)
-    )
-    .add_system_set(
-        SystemSet::new()
-        .with_run_criteria(FixedTimestep::step(0.35))
-        .with_system(move_head.system().label(Order::Movement))
-    )
-    .run();
+        .insert_resource(WindowDescriptor {
+            title: "Snake".to_string(),
+            width: WINDOW_SIZE,
+            height: WINDOW_SIZE,
+            ..Default::default()
+        })
+        .insert_resource(Segments::default())
+        .add_plugins(DefaultPlugins)
+        .add_startup_system(setup.system())
+        .add_startup_system(spawn.system())
+        .add_system_set_to_stage(
+            CoreStage::PostUpdate,
+            SystemSet::new()
+                .with_system(update_location.system())
+        )
+        .add_system(
+            change_direction.system()
+            .label(Order::Input)
+            .before(Order::Movement)
+        )
+        .add_system_set(
+            SystemSet::new()
+            .with_run_criteria(FixedTimestep::step(0.35))
+            .with_system(move_head.system().label(Order::Movement))
+        )
+        .add_system_set(
+            SystemSet::new()
+            .with_run_criteria(FixedTimestep::step(1.0))
+            .with_system(spawn_food.system())
+        )
+        .run();
 }
 
 fn setup(mut commands: Commands) {
     commands.spawn_bundle(OrthographicCameraBundle::new_2d());
 }
 
-fn spawn(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
+fn spawn(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>, mut segments: ResMut<Segments>) {
+
+    segments.0 = vec![
+        commands.spawn_bundle(SpriteBundle {
+            material: materials.add(Color::rgb(1.0,1.0,1.0).into()),
+            transform: Transform::from_xyz(0.0,0.0,0.0),
+            sprite: Sprite::new(Vec2::new(CELLSIZE, CELLSIZE)),
+            ..Default::default()
+        })
+        .insert(Head {
+            direction: Direction::Up,
+        })
+        .insert(Location {
+            x: 8,
+            y: 8,
+        })
+        .insert(Segment)
+        .id(),
+        spawn_segment(commands, materials, Location {x:8, y:7})
+    ];
+
+    
+}
+
+fn spawn_segment(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>, location: Location) -> Entity {
     commands.spawn_bundle(SpriteBundle {
         material: materials.add(Color::rgb(1.0,1.0,1.0).into()),
         transform: Transform::from_xyz(0.0,0.0,0.0),
         sprite: Sprite::new(Vec2::new(CELLSIZE, CELLSIZE)),
         ..Default::default()
     })
-    .insert(Head {
-        direction: Direction::Up,
+    .insert(Segment)
+    .insert(location)
+    .id()
+}
+
+fn spawn_food(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
+    commands.spawn_bundle(SpriteBundle {
+        material: materials.add(Color::rgb(0.0,1.0,0.0).into()),
+        transform: Transform::from_xyz(0.0,0.0,0.0),
+        sprite: Sprite::new(Vec2::new(CELLSIZE, CELLSIZE)),
+        ..Default::default()
     })
     .insert(Location {
-        x: 8,
-        y: 8,
+        x: (random::<f32>() * GRID_SIZE as f32) as i32,
+        y: (random::<f32>() * GRID_SIZE as f32) as i32,
     });
 }
 
@@ -151,14 +196,21 @@ fn change_direction(keyboard: Res<Input<KeyCode>>, mut query: Query<&mut Head>) 
     }
 }
 
-fn move_head(mut query: Query<(&mut Location, &Head)>) {
-    if let Some((mut location, head)) = query.iter_mut().next() {
-        // TODO: max and min the location.y and location.x so they dont go over 15 and below 0
-        match &head.direction {
-            Direction::Up => location.y += 1,
-            Direction::Left => location.x -= 1,
-            Direction::Down => location.y -= 1,
-            Direction::Right => location.x +=1,
+fn move_head(segments: ResMut<Segments>, mut heads: Query<(Entity, &Head)>, mut locations: Query<&mut Location>) {
+    if let Some((head_entity, head)) = heads.iter_mut().next() {
+        let locs = segments.0.iter().map(|segment| *locations.get_mut(*segment).unwrap()).collect::<Vec<Location>>();
+
+        let mut head_loc = locations.get_mut(head_entity).unwrap();
+        match head.direction {
+            Direction::Up => head_loc.y = (head_loc.y + 1).min(15),
+            Direction::Left => head_loc.x = (head_loc.x - 1).max(0),
+            Direction::Down => head_loc.y = (head_loc.y - 1).max(0),
+            Direction::Right => head_loc.x = (head_loc.x + 1).min(15),
         }
+
+        for (loc, segment) in locs.iter().zip(segments.0.iter().skip(1)) {
+            *locations.get_mut(*segment).unwrap() = *loc;
+        }
+
     }
 }
