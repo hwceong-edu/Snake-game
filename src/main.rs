@@ -36,9 +36,14 @@ struct Head {
 }
 
 struct Segment;
+struct Food;
+struct GrowEvent;
 
 #[derive(Default)]
 struct Segments(Vec<Entity>);
+
+#[derive(Default)]
+struct TailEnd(Option<Location>);
 
 #[derive(SystemLabel, Debug, Hash, PartialEq, Eq, Clone)]
 pub enum Order {
@@ -57,6 +62,8 @@ fn main() {
             ..Default::default()
         })
         .insert_resource(Segments::default())
+        .insert_resource(TailEnd::default())
+        .add_event::<GrowEvent>()
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup.system())
         .add_startup_system(spawn.system())
@@ -74,6 +81,8 @@ fn main() {
             SystemSet::new()
             .with_run_criteria(FixedTimestep::step(0.35))
             .with_system(move_head.system().label(Order::Movement))
+            .with_system(eat.system().label(Order::Eating).after(Order::Movement))
+            .with_system(grow.system().label(Order::Growth).after(Order::Eating))
         )
         .add_system_set(
             SystemSet::new()
@@ -130,6 +139,7 @@ fn spawn_food(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial
         sprite: Sprite::new(Vec2::new(CELLSIZE, CELLSIZE)),
         ..Default::default()
     })
+    .insert(Food)
     .insert(Location {
         x: (random::<f32>() * GRID_SIZE as f32) as i32,
         y: (random::<f32>() * GRID_SIZE as f32) as i32,
@@ -196,9 +206,32 @@ fn change_direction(keyboard: Res<Input<KeyCode>>, mut query: Query<&mut Head>) 
     }
 }
 
-fn move_head(segments: ResMut<Segments>, mut heads: Query<(Entity, &Head)>, mut locations: Query<&mut Location>) {
+fn eat(
+    mut commands: Commands, 
+    mut eventwriter: EventWriter<GrowEvent>, 
+    food_location: Query<(Entity, &Location), With<Food>>,
+    head_location: Query<&Location, With<Head>>
+) {
+    for head_loc in head_location.iter() {
+        for (entity, food_loc) in food_location.iter() {
+            if food_loc == head_loc {
+                commands.entity(entity).despawn();
+                eventwriter.send(GrowEvent);
+            }
+        }
+    }
+
+}
+
+fn move_head(
+    segments: ResMut<Segments>, 
+    mut heads: Query<(Entity, &Head)>, 
+    mut locations: Query<&mut Location>,
+    mut tailend: ResMut<TailEnd>
+) {
     if let Some((head_entity, head)) = heads.iter_mut().next() {
         let locs = segments.0.iter().map(|segment| *locations.get_mut(*segment).unwrap()).collect::<Vec<Location>>();
+        tailend.0 = Some(*locs.last().unwrap());
 
         let mut head_loc = locations.get_mut(head_entity).unwrap();
         match head.direction {
@@ -212,5 +245,17 @@ fn move_head(segments: ResMut<Segments>, mut heads: Query<(Entity, &Head)>, mut 
             *locations.get_mut(*segment).unwrap() = *loc;
         }
 
+    }
+}
+
+fn grow(
+    commands: Commands,
+    tailend: Res<TailEnd>,
+    mut segments: ResMut<Segments>,
+    mut eventreader: EventReader<GrowEvent>,
+    materials: ResMut<Assets<ColorMaterial>>,
+) {
+    if eventreader.iter().next().is_some() {
+        segments.0.push(spawn_segment(commands, materials, tailend.0.unwrap()))
     }
 }
