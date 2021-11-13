@@ -1,0 +1,13 @@
+<html>
+<head>
+<title>Snake</title>
+</head>
+<body>
+<script type="module">
+  import init from "./snakewasm.js";
+  init("./snakewasm_bg.wasm").then(function (wasm) {
+    wasm.run();
+  });
+</script>
+</body>
+</html>
